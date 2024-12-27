@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Simulasi Produksi Minyak (DCA)</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.4.0/jspdf.umd.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+    }
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      background-color: #f9f9f9;
+    }
+    h1, h2 {
+      text-align: center;
+    }
+    input, select, button {
+      width: 100%;
+      padding: 10px;
+      margin: 10px 0;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+    }
+    button {
+      background-color: #007BFF;
+      color: white;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #0056b3;
+    }
+    .result {
+      margin-top: 20px;
+      padding: 10px;
+      background-color: #e9f7df;
+      border: 1px solid #c3e6cb;
+      border-radius: 5px;
+    }
+    #chart-container {
+      margin-top: 20px;
+    }
+    h3 {
+      margin-top: 20px;
+    }
+    ul {
+      padding: 0;
+      list-style-type: none;
+    }
+    li {
+      margin: 10px 0;
+    }
+  </style>
+</head>
+<body>
+  <h1>PetroPredict</h1>
+  <div class="container">
+    <h2>Input Data</h2>
+    
+    <label for="csvFile">Unggah File CSV (opsional):</label>
+    <input type="file" id="csvFile" accept=".csv">
+    
+    <label for="qi">Produksi Awal (qi, STB/day):</label>
+    <input type="number" id="qi" placeholder="Masukkan produksi awal (STB/day)" required>
+    
+    <label for="d">Decline Rate (D, fraction per year):</label>
+    <input type="number" step="0.01" id="d" placeholder="Masukkan decline rate (contoh: 0.1)" required>
+    
+    <label for="b">Konstanta Hyperbolic (b):</label>
+    <input type="number" step="0.01" id="b" placeholder="Masukkan nilai b (0 untuk eksponensial)" required>
+    
+    <label for="t">Durasi Prediksi (t, hari):</label>
+    <input type="number" id="t" placeholder="Masukkan durasi prediksi (hari)" required>
+    
+    <label for="method">Metode Penurunan:</label>
+    <select id="method">
+      <option value="exponential">Exponential Decline</option>
+      <option value="harmonic">Harmonic Decline</option>
+      <option value="hyperbolic">Hyperbolic Decline</option>
+    </select>
+
+    <button onclick="processData()">Proses Data dan Prediksi</button>
+
+    <div class="result" id="result" style="display: none;">
+      <h3>Hasil Prediksi:</h3>
+      <p id="output"></p>
+      <p id="additionalOutput"></p>
+      <button onclick="generatePDF()">Generate Laporan PDF</button>
+      <div id="chart-container">
+        <canvas id="predictionChart"></canvas>
+      </div>
+    </div>
+
+    <h3>Riwayat Hasil:</h3>
+    <ul id="historyList"></ul>
+  </div>
+
+  <script>
+    let chart;
+    let chartImageUrl = ""; // Variabel untuk menyimpan URL grafik terbaru
+    let historyData = []; // Array untuk menyimpan riwayat hasil prediksi
+
+    function processData() {
+        const fileInput = document.getElementById('csvFile');
+        const qi = parseFloat(document.getElementById('qi').value);
+        const d = parseFloat(document.getElementById('d').value);
+        const b = parseFloat(document.getElementById('b').value);
+        const t = parseInt(document.getElementById('t').value);
+        const method = document.getElementById('method').value;
+
+        if (!qi || !d || !t || (method === 'hyperbolic' && !b)) {
+            alert('Mohon masukkan semua nilai dengan benar.');
+            return;
+        }
+
+        let actualProduction = [];
+
+        if (fileInput.files.length > 0) {
+            const file = fileInput.files[0];
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                const csvData = event.target.result;
+                const rows = csvData.split('\n').slice(1);
+                actualProduction = rows.map(row => parseFloat(row.split(',')[1])).filter(num => !isNaN(num));
+                predictAndVisualize(actualProduction, qi, d, b, t, method);
+            };
+            reader.readAsText(file);
+        } else {
+            predictAndVisualize(actualProduction, qi, d, b, t, method);
+        }
+    }
+
+    function predictAndVisualize(actualProduction, qi, d, b, t, method) {
+        let predictedProduction = [];
+        for (let i = 0; i < t; i++) {
+            let qt = 0;
+            if (method === 'exponential') qt = qi * Math.exp(-d * i / 365);
+            else if (method === 'harmonic') qt = qi / (1 + d * i / 365);
+            else if (method === 'hyperbolic') qt = qi * Math.pow(1 + b * d * i / 365, -1 / b);
+            predictedProduction.push(qt);
+        }
+
+        const totalPredictedProduction = predictedProduction.reduce((acc, curr) => acc + curr, 0);
+        const additionalProduction = totalPredictedProduction - actualProduction.reduce((acc, curr) => acc + curr, 0);
+
+        visualizeData(actualProduction, predictedProduction);
+
+        document.getElementById('output').innerText = `Prediksi Produksi Minyak selama ${t} hari.\nProduksi Prediksi Total: ${totalPredictedProduction.toFixed(2)} STB\nTambahan Produksi: ${additionalProduction.toFixed(2)} STB`;
+        document.getElementById('additionalOutput').innerText = `Tambahan Produksi Total selama ${t} hari adalah ${additionalProduction.toFixed(2)} STB`;
+        document.getElementById('result').style.display = 'block';
+
+        // Menyimpan hasil prediksi ke riwayat
+        const historyItem = {
+            date: new Date().toLocaleString(),
+            totalPredictedProduction: totalPredictedProduction.toFixed(2),
+            additionalProduction: additionalProduction.toFixed(2),
+        };
+        historyData.push(historyItem);
+        updateHistoryList();
+    }
+
+    function updateHistoryList() {
+        const historyList = document.getElementById('historyList');
+        historyList.innerHTML = '';
+        historyData.forEach((item, index) => {
+            const listItem = document.createElement('li');
+            listItem.textContent = `Prediksi ${item.date} - Total Produksi: ${item.totalPredictedProduction} STB, Tambahan Produksi: ${item.additionalProduction} STB`;
+            historyList.appendChild(listItem);
+        });
+    }
+
+    function visualizeData(actual, predicted) {
+        const ctx = document.getElementById('predictionChart').getContext('2d');
+        if (chart) chart.destroy();
+        chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: Array.from({ length: Math.max(actual.length, predicted.length) }, (_, i) => i + 1),
+                datasets: [
+                    { label: 'Produksi Aktual', data: actual, borderColor: 'rgba(255, 99, 132, 1)', backgroundColor: 'rgba(255, 99, 132, 0.2)' },
+                    { label: 'Produksi Prediksi', data: predicted, borderColor: 'rgba(54, 162, 235, 1)', backgroundColor: 'rgba(54, 162, 235, 0.2)' },
+                ],
+            },
+            options: { responsive: true },
+        });
+        setTimeout(() => { chartImageUrl = ctx.canvas.toDataURL(); }, 100);
+    }
+
+    function generatePDF() {
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF();
+        doc.setFont("Times", "normal");
+        doc.setFontSize(14);
+        doc.text("Laporan Hasil Simulasi Produksi Minyak", 10, 10);
+        doc.text(document.getElementById('output').innerText + "\n" + document.getElementById('additionalOutput').innerText, 10, 20);
+        if (chartImageUrl) doc.addImage(chartImageUrl, 'PNG', 10, 40, 190, 100);
+        doc.save("laporan_simulasi_produksi_minyak.pdf");
+        alert("Laporan PDF berhasil dibuat!");
+    }
+  </script>
+</body>
+</html>
